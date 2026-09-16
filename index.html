@@ -121,6 +121,19 @@
       font-size: 0.85rem;
     }
     .manual-set { background: #dbeafe; font-weight: 700; border-color: #2563eb; }
+    
+    /* Disabled position row styling (e.g. Catcher when < 9 players) */
+    tr.pos-disabled td {
+      background: #f1f5f9 !important;
+      color: #94a3b8 !important;
+    }
+    tr.pos-disabled select {
+      background: #e2e8f0 !important;
+      border-color: #cbd5e1 !important;
+      color: #94a3b8 !important;
+      cursor: not-allowed;
+    }
+
     th.current-inning-col { background: #2563eb !important; color: #ffffff !important; }
     td.current-inning-col {
       background: var(--highlight-bg);
@@ -197,7 +210,7 @@
       padding: 1.5rem;
     }
 
-    /* Print Styles: Landscape Fit for All 6 Innings */
+    /* Print Styles */
     @page {
       size: letter landscape;
       margin: 0.35in;
@@ -391,12 +404,12 @@
     // ==========================================
     const firebaseConfig = {
       apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
-      authDomain: "rockies-2fe2c.firebaseapp.com",
-      databaseURL: "https://rockies-2fe2c-default-rtdb.firebaseio.com",
-      projectId: "rockies-2fe2c",
-      storageBucket: "rockies-2fe2c.firebasestorage.app",
-      messagingSenderId: "251399851750",
-      appId: "1:251399851750:web:b754bb5867a4e1b56eb527"
+      authDomain: "rockies-2fe2c.firebaseapp.com",
+      databaseURL: "https://rockies-2fe2c-default-rtdb.firebaseio.com",
+      projectId: "rockies-2fe2c",
+      storageBucket: "rockies-2fe2c.firebasestorage.app",
+      messagingSenderId: "251399851750",
+      appId: "1:251399851750:web:b754bb5867a4e1b56eb527"
     };
 
     // Initialize Firebase
@@ -417,7 +430,7 @@
     let currentInning = 1;
     let teamCode = localStorage.getItem("ball_team_code") || "FALL26";
 
-    // 9 Standard Positions (6 Infield, 3 Outfield)
+    // Standard Positions
     const POSITIONS = [
       { key: "P", label: "Pitcher", type: "IF" },
       { key: "C", label: "Catcher", type: "IF" },
@@ -493,6 +506,10 @@
                 remoteGrid[i][p.key] = { player: "", manual: false };
               }
             });
+            // If fewer than 9 active players, clear Catcher
+            if (roster.length < 9) {
+              remoteGrid[i]["C"] = { player: "", manual: false };
+            }
             delete remoteGrid[i]["LC"];
             delete remoteGrid[i]["RC"];
           }
@@ -588,12 +605,17 @@
       absentList.push(removed);
       if (lastOutPlayer === removed) lastOutPlayer = null;
 
+      // Remove player from grid
       for (let i = 0; i < INNINGS; i++) {
         POSITIONS.forEach(p => {
           if (rotationState[i][p.key].player === removed) {
             rotationState[i][p.key] = { player: "", manual: false };
           }
         });
+        // If roster dropped below 9, clear Catcher row
+        if (roster.length < 9) {
+          rotationState[i]["C"] = { player: "", manual: false };
+        }
       }
       pushCloudUpdate();
     }
@@ -668,6 +690,8 @@
       thead.innerHTML = "";
       tbody.innerHTML = "";
 
+      const catcherDisabled = roster.length < 9;
+
       let headTr = `<tr><th style="text-align:left;">Position / Inning</th>`;
       for (let inn = 1; inn <= INNINGS; inn++) {
         const isCurrent = (inn === currentInning);
@@ -678,33 +702,44 @@
 
       POSITIONS.forEach(pos => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td class="pos-label">${pos.label} <span class="pos-type-tag ${pos.type === 'IF' ? 'type-if' : 'type-of'}">${pos.type}</span></td>`;
+        const isDisabledPos = (pos.key === "C" && catcherDisabled);
+        if (isDisabledPos) tr.className = "pos-disabled";
+
+        let labelHtml = `${pos.label} <span class="pos-type-tag ${pos.type === 'IF' ? 'type-if' : 'type-of'}">${pos.type}</span>`;
+        if (isDisabledPos) {
+          labelHtml += ` <small style="display:block; font-size:0.65rem; color:#94a3b8; font-weight:normal;">(Optional - &lt;9 Players)</small>`;
+        }
+        tr.innerHTML = `<td class="pos-label">${labelHtml}</td>`;
 
         for (let innIdx = 0; innIdx < INNINGS; innIdx++) {
           const td = document.createElement("td");
           if (innIdx + 1 === currentInning) td.className = "current-inning-col";
 
           const select = document.createElement("select");
-          if (rotationState[innIdx][pos.key].manual) select.className = "manual-set";
+          if (isDisabledPos) {
+            select.disabled = true;
+            select.innerHTML = `<option value="">-- Not Used --</option>`;
+          } else {
+            if (rotationState[innIdx][pos.key].manual) select.className = "manual-set";
+            select.innerHTML = `<option value="">-- Open --</option>` + roster.map(p => 
+              `<option value="${p}" ${rotationState[innIdx][pos.key].player === p ? 'selected' : ''}>${p}</option>`
+            ).join("");
 
-          select.innerHTML = `<option value="">-- Open --</option>` + roster.map(p => 
-            `<option value="${p}" ${rotationState[innIdx][pos.key].player === p ? 'selected' : ''}>${p}</option>`
-          ).join("");
-
-          select.onchange = (e) => {
-            const val = e.target.value;
-            if (!val) {
-              rotationState[innIdx][pos.key] = { player: "", manual: false };
-            } else {
-              POSITIONS.forEach(other => {
-                if (other.key !== pos.key && rotationState[innIdx][other.key].player === val) {
-                  rotationState[innIdx][other.key] = { player: "", manual: false };
-                }
-              });
-              rotationState[innIdx][pos.key] = { player: val, manual: true };
-            }
-            pushCloudUpdate();
-          };
+            select.onchange = (e) => {
+              const val = e.target.value;
+              if (!val) {
+                rotationState[innIdx][pos.key] = { player: "", manual: false };
+              } else {
+                POSITIONS.forEach(other => {
+                  if (other.key !== pos.key && rotationState[innIdx][other.key].player === val) {
+                    rotationState[innIdx][other.key] = { player: "", manual: false };
+                  }
+                });
+                rotationState[innIdx][pos.key] = { player: val, manual: true };
+              }
+              pushCloudUpdate();
+            };
+          }
 
           td.appendChild(select);
           tr.appendChild(td);
@@ -788,10 +823,15 @@
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
       let solved = false, best = null;
 
+      // Determine required active field positions:
+      // If < 9 players, Catcher is NOT fielded. Drop Catcher first.
       let activeField = [...POSITIONS];
       if (roster.length < 9) {
-        // If 7 or 8 players, drop outfield spots starting with RF, then LF
-        activeField = POSITIONS.filter(p => !["RF", "LF"].slice(0, 9 - roster.length).includes(p.key));
+        activeField = activeField.filter(p => p.key !== "C");
+        // If 7 players, drop RF as well
+        if (roster.length === 7) {
+          activeField = activeField.filter(p => p.key !== "RF");
+        }
       }
 
       for (let attempt = 0; attempt < 900; attempt++) {
@@ -803,6 +843,13 @@
           ifCounts[p] = 0; earlyIf[p] = 0; ifThrough5[p] = 0; benchCounts[p] = 0; posUsage[p] = {};
           POSITIONS.forEach(pos => posUsage[p][pos.key] = 0);
         });
+
+        // If < 9 players, ensure Catcher remains cleared
+        if (roster.length < 9) {
+          for (let inn = 0; inn < INNINGS; inn++) {
+            candidate[inn]["C"] = { player: "", manual: false };
+          }
+        }
 
         // Pre-count manual selections
         for (let inn = 0; inn < INNINGS; inn++) {
@@ -861,7 +908,7 @@
           let meets = roster.every(r => {
             const rMeetsIF = ifCounts[r] >= 3;
             const rMeetsEarly = earlyIf[r] >= 2;
-            const rMeetsRule4 = ifThrough5[r] <= 3; // Rule 4: Max 3 IF in innings 1-5
+            const rMeetsRule4 = ifThrough5[r] <= 3;
             const rMeetsBench = benchCounts[r] <= 2;
             const rMeetsPosRepeat = IF_KEYS.every(k => posUsage[r][k] <= 2);
             return rMeetsIF && rMeetsEarly && rMeetsRule4 && rMeetsBench && rMeetsPosRepeat;

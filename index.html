@@ -122,7 +122,6 @@
     }
     .manual-set { background: #dbeafe; font-weight: 700; border-color: #2563eb; }
     
-    /* Disabled position row styling (e.g. Catcher when < 9 players) */
     tr.pos-disabled td {
       background: #f1f5f9 !important;
       color: #94a3b8 !important;
@@ -210,7 +209,6 @@
       padding: 1.5rem;
     }
 
-    /* Print Styles */
     @page {
       size: letter landscape;
       margin: 0.35in;
@@ -506,7 +504,6 @@
                 remoteGrid[i][p.key] = { player: "", manual: false };
               }
             });
-            // If fewer than 9 active players, clear Catcher
             if (roster.length < 9) {
               remoteGrid[i]["C"] = { player: "", manual: false };
             }
@@ -605,14 +602,12 @@
       absentList.push(removed);
       if (lastOutPlayer === removed) lastOutPlayer = null;
 
-      // Remove player from grid
       for (let i = 0; i < INNINGS; i++) {
         POSITIONS.forEach(p => {
           if (rotationState[i][p.key].player === removed) {
             rotationState[i][p.key] = { player: "", manual: false };
           }
         });
-        // If roster dropped below 9, clear Catcher row
         if (roster.length < 9) {
           rotationState[i]["C"] = { player: "", manual: false };
         }
@@ -783,23 +778,16 @@
         }
 
         const violations = [];
-        // Rule 1: Minimum 3 IF innings per game
         if (totalIF < 3) violations.push(`Need ${3 - totalIF} more IF`);
-        
-        // Rule 2: Minimum 2 IF innings in first 4 innings
         if (earlyIF < 2) violations.push(`Need ${2 - earlyIF} more IF (Inn 1-4)`);
-        
-        // Bench limit
         if (bench > 2) violations.push(`Bench exceeded (${bench}/2)`);
         
-        // Rule 3: No playing same IF position more than twice
         POSITIONS.forEach(p => {
           if (p.type === "IF" && (posCounts[p.key] || 0) > 2) {
             violations.push(`${p.key}: ${posCounts[p.key]}x (max 2)`);
           }
         });
 
-        // Rule 4: 4th IF inning cannot happen before the 6th inning (max 3 IF through Innings 1-5)
         if (ifThroughInn5 > 3) {
           violations.push(`4th IF before Inn 6 (${ifThroughInn5}/3 max through Inn 5)`);
         }
@@ -818,25 +806,27 @@
       });
     }
 
+    // Best-Fit Optimization Engine (Handles full 9-player & short rosters smoothly)
     function autoFillRemaining() {
-      if (roster.length < 7) { alert("Need 7+ players."); return; }
+      if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
-      let solved = false, best = null;
 
-      // Determine required active field positions:
-      // If < 9 players, Catcher is NOT fielded. Drop Catcher first.
       let activeField = [...POSITIONS];
       if (roster.length < 9) {
+        // Catcher not used if under 9 players
         activeField = activeField.filter(p => p.key !== "C");
-        // If 7 players, drop RF as well
-        if (roster.length === 7) {
-          activeField = activeField.filter(p => p.key !== "RF");
-        }
+        // If 7 players, drop RF; if 6 players, drop LF too
+        if (roster.length <= 7) activeField = activeField.filter(p => p.key !== "RF");
+        if (roster.length <= 6) activeField = activeField.filter(p => p.key !== "LF");
       }
 
-      for (let attempt = 0; attempt < 900; attempt++) {
+      let bestState = null;
+      let bestPenalty = Infinity;
+      const MAX_ATTEMPTS = 1200;
+
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const candidate = JSON.parse(JSON.stringify(rotationState));
-        let valid = true;
+        let validRun = true;
         const ifCounts = {}, earlyIf = {}, ifThrough5 = {}, posUsage = {}, benchCounts = {};
 
         roster.forEach(p => {
@@ -844,14 +834,13 @@
           POSITIONS.forEach(pos => posUsage[p][pos.key] = 0);
         });
 
-        // If < 9 players, ensure Catcher remains cleared
         if (roster.length < 9) {
           for (let inn = 0; inn < INNINGS; inn++) {
             candidate[inn]["C"] = { player: "", manual: false };
           }
         }
 
-        // Pre-count manual selections
+        // Tally manual pins
         for (let inn = 0; inn < INNINGS; inn++) {
           POSITIONS.forEach(pos => {
             const pl = candidate[inn][pos.key].player;
@@ -871,23 +860,34 @@
           const open = activeField.filter(pos => !candidate[inn][pos.key].player).sort((a,b) => a.type === "IF" ? -1 : 1);
 
           for (let pos of open) {
+            // Hard constraint: Cannot repeat same IF position > 2 times
             const elig = roster.filter(cand => {
               if (assigned.includes(cand)) return false;
-              // Rule 3: No repeating same IF position > 2 times
               if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
-              // Rule 4: Cannot receive a 4th IF inning in innings 1-5
-              if (pos.type === "IF" && inn < 5 && ifThrough5[cand] >= 3) return false;
               return true;
             });
 
-            if (!elig.length) { valid = false; break; }
+            if (!elig.length) { validRun = false; break; }
 
             elig.sort((a, b) => {
               if (pos.type === "IF") {
-                if (inn < 4 && earlyIf[a] !== earlyIf[b]) return earlyIf[a] - earlyIf[b];
-                return ifCounts[a] - ifCounts[b];
+                // Heavily penalize anyone trying to take a 4th IF in innings 1-5
+                const aOver5 = (inn < 5 && ifThrough5[a] >= 3) ? 100 : 0;
+                const bOver5 = (inn < 5 && ifThrough5[b] >= 3) ? 100 : 0;
+                if (aOver5 !== bOver5) return aOver5 - bOver5;
+
+                if (inn < 4) {
+                  const aNeedEarly = 2 - earlyIf[a];
+                  const bNeedEarly = 2 - earlyIf[b];
+                  if (aNeedEarly !== bNeedEarly) return bNeedEarly - aNeedEarly;
+                }
+                const aNeed = 3 - ifCounts[a];
+                const bNeed = 3 - ifCounts[b];
+                if (aNeed !== bNeed) return bNeed - aNeed;
+              } else {
+                return ifCounts[b] - ifCounts[a];
               }
-              return ifCounts[b] - ifCounts[a] || (Math.random() - 0.5);
+              return Math.random() - 0.5;
             });
 
             const choice = elig[0];
@@ -900,29 +900,39 @@
               if (inn < 5) ifThrough5[choice]++;
             }
           }
-          if (!valid) break;
+          if (!validRun) break;
           roster.forEach(r => { if (!assigned.includes(r)) benchCounts[r]++; });
         }
 
-        if (valid) {
-          let meets = roster.every(r => {
-            const rMeetsIF = ifCounts[r] >= 3;
-            const rMeetsEarly = earlyIf[r] >= 2;
-            const rMeetsRule4 = ifThrough5[r] <= 3;
-            const rMeetsBench = benchCounts[r] <= 2;
-            const rMeetsPosRepeat = IF_KEYS.every(k => posUsage[r][k] <= 2);
-            return rMeetsIF && rMeetsEarly && rMeetsRule4 && rMeetsBench && rMeetsPosRepeat;
+        if (validRun) {
+          // Calculate penalty score (0 is 100% compliant)
+          let penalty = 0;
+          roster.forEach(r => {
+            if (ifCounts[r] < 3) penalty += (3 - ifCounts[r]) * 25;
+            if (earlyIf[r] < 2) penalty += (2 - earlyIf[r]) * 20;
+            if (ifThrough5[r] > 3) penalty += (ifThrough5[r] - 3) * 30;
+            if (benchCounts[r] > 2) penalty += (benchCounts[r] - 2) * 50;
+            IF_KEYS.forEach(k => {
+              if (posUsage[r][k] > 2) penalty += (posUsage[r][k] - 2) * 100;
+            });
           });
 
-          if (meets) { best = candidate; solved = true; break; }
+          if (penalty < bestPenalty) {
+            bestPenalty = penalty;
+            bestState = candidate;
+            if (bestPenalty === 0) break; // Found perfect rotation
+          }
         }
       }
 
-      if (solved && best) {
-        rotationState = best;
+      if (bestState) {
+        rotationState = bestState;
         pushCloudUpdate();
+        if (bestPenalty > 0 && roster.length < 9) {
+          alert(`Auto-filled the best possible configuration for ${roster.length} players. Because catcher was omitted, some infield time is maximized to the closest mathematical limit.`);
+        }
       } else {
-        alert("Constraints could not be satisfied with the current pinned positions. Try clearing a few manual picks and try again.");
+        alert("Could not satisfy rotation constraints with current manual picks. Please clear a few manual selections and try again.");
       }
     }
 

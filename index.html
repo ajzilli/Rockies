@@ -806,23 +806,21 @@
       });
     }
 
-    // Best-Fit Optimization Engine (Handles full 9-player & short rosters smoothly)
+    // Best-Fit Optimization Engine with Position Variety Bonus/Penalty
     function autoFillRemaining() {
       if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
 
       let activeField = [...POSITIONS];
       if (roster.length < 9) {
-        // Catcher not used if under 9 players
         activeField = activeField.filter(p => p.key !== "C");
-        // If 7 players, drop RF; if 6 players, drop LF too
         if (roster.length <= 7) activeField = activeField.filter(p => p.key !== "RF");
         if (roster.length <= 6) activeField = activeField.filter(p => p.key !== "LF");
       }
 
       let bestState = null;
       let bestPenalty = Infinity;
-      const MAX_ATTEMPTS = 1200;
+      const MAX_ATTEMPTS = 1500;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const candidate = JSON.parse(JSON.stringify(rotationState));
@@ -860,7 +858,6 @@
           const open = activeField.filter(pos => !candidate[inn][pos.key].player).sort((a,b) => a.type === "IF" ? -1 : 1);
 
           for (let pos of open) {
-            // Hard constraint: Cannot repeat same IF position > 2 times
             const elig = roster.filter(cand => {
               if (assigned.includes(cand)) return false;
               if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
@@ -870,8 +867,12 @@
             if (!elig.length) { validRun = false; break; }
 
             elig.sort((a, b) => {
+              // Position Variety Tie-Breaker: Prefer players who have played THIS specific position fewer times
+              const aPosCount = posUsage[a][pos.key] || 0;
+              const bPosCount = posUsage[b][pos.key] || 0;
+              if (aPosCount !== bPosCount) return aPosCount - bPosCount;
+
               if (pos.type === "IF") {
-                // Heavily penalize anyone trying to take a 4th IF in innings 1-5
                 const aOver5 = (inn < 5 && ifThrough5[a] >= 3) ? 100 : 0;
                 const bOver5 = (inn < 5 && ifThrough5[b] >= 3) ? 100 : 0;
                 if (aOver5 !== bOver5) return aOver5 - bOver5;
@@ -879,7 +880,7 @@
                 if (inn < 4) {
                   const aNeedEarly = 2 - earlyIf[a];
                   const bNeedEarly = 2 - earlyIf[b];
-                  if (aNeedEarly !== bNeedEarly) return bNeedEarly - aNeedEarly;
+                  if (aNeedEarly !== bNeedEarly) return bNeedEarly - bNeedEarly;
                 }
                 const aNeed = 3 - ifCounts[a];
                 const bNeed = 3 - ifCounts[b];
@@ -905,13 +906,21 @@
         }
 
         if (validRun) {
-          // Calculate penalty score (0 is 100% compliant)
           let penalty = 0;
           roster.forEach(r => {
             if (ifCounts[r] < 3) penalty += (3 - ifCounts[r]) * 25;
             if (earlyIf[r] < 2) penalty += (2 - earlyIf[r]) * 20;
             if (ifThrough5[r] > 3) penalty += (ifThrough5[r] - 3) * 30;
             if (benchCounts[r] > 2) penalty += (benchCounts[r] - 2) * 50;
+            
+            // Add a small penalty for any position played more than once to strongly promote variety across the board
+            POSITIONS.forEach(pos => {
+              const pCount = posUsage[r][pos.key] || 0;
+              if (pCount > 1) {
+                penalty += (pCount - 1) * 15;
+              }
+            });
+
             IF_KEYS.forEach(k => {
               if (posUsage[r][k] > 2) penalty += (posUsage[r][k] - 2) * 100;
             });
@@ -920,7 +929,7 @@
           if (penalty < bestPenalty) {
             bestPenalty = penalty;
             bestState = candidate;
-            if (bestPenalty === 0) break; // Found perfect rotation
+            if (bestPenalty === 0) break;
           }
         }
       }
@@ -928,9 +937,6 @@
       if (bestState) {
         rotationState = bestState;
         pushCloudUpdate();
-        if (bestPenalty > 0 && roster.length < 9) {
-          alert(`Auto-filled the best possible configuration for ${roster.length} players. Because catcher was omitted, some infield time is maximized to the closest mathematical limit.`);
-        }
       } else {
         alert("Could not satisfy rotation constraints with current manual picks. Please clear a few manual selections and try again.");
       }

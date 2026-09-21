@@ -107,7 +107,20 @@
     table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
     th, td { border: 1px solid var(--border); padding: 0.5rem 0.6rem; text-align: center; white-space: nowrap; }
     th { background: #f1f5f9; font-weight: 600; }
-    .pos-label { text-align: left; font-weight: 700; background: #f8fafc; width: 160px; }
+    
+    /* Sticky Position Column for Mobile & Desktop Scrolling */
+    th:first-child, .pos-label {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      background: #f8fafc;
+    }
+    th:first-child {
+      z-index: 4;
+      background: #f1f5f9 !important;
+    }
+
+    .pos-label { text-align: left; font-weight: 700; width: 160px; }
     .pos-type-tag { font-size: 0.7rem; padding: 2px 5px; border-radius: 3px; margin-left: 6px; font-weight: 600; }
     .type-if { background: #e0e7ff; color: #3730a3; }
     .type-of { background: #fef3c7; color: #92400e; }
@@ -262,6 +275,9 @@
       th {
         background: #f1f5f9 !important;
         color: #000 !important;
+      }
+      th:first-child, .pos-label {
+        position: static !important;
       }
       .pos-label {
         width: 15% !important;
@@ -421,7 +437,7 @@
     }
 
     // Default Roster (9 players)
-    let roster = ["Beckett", "Cash", "Jack B", "Max", "Dean", "Arlo", "Jack N", "William", "Zachary"];
+    let roster = ["Arlo", "Beckett", "Cash", "Dean", "Jack B", "Jack N", "Max", "William", "Zachary"];
     let absentList = [];
     let teamName = "Fall Ball 2026";
     let lastOutPlayer = null;
@@ -806,7 +822,7 @@
       });
     }
 
-    // Best-Fit Optimization Engine with Position Variety Bonus/Penalty
+    // Optimization Engine with Strict Rule #4 Lock for 9 Players & Variety Bonus
     function autoFillRemaining() {
       if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
@@ -820,7 +836,7 @@
 
       let bestState = null;
       let bestPenalty = Infinity;
-      const MAX_ATTEMPTS = 1500;
+      const MAX_ATTEMPTS = 2000;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const candidate = JSON.parse(JSON.stringify(rotationState));
@@ -861,26 +877,27 @@
             const elig = roster.filter(cand => {
               if (assigned.includes(cand)) return false;
               if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
+              
+              // STRICT RULE #4: When 9 players active, no 4th IF inning before Inning 6
+              if (roster.length === 9 && pos.type === "IF" && inn < 5 && ifThrough5[cand] >= 3) {
+                return false;
+              }
               return true;
             });
 
             if (!elig.length) { validRun = false; break; }
 
             elig.sort((a, b) => {
-              // Position Variety Tie-Breaker: Prefer players who have played THIS specific position fewer times
+              // Position Variety Tie-Breaker
               const aPosCount = posUsage[a][pos.key] || 0;
               const bPosCount = posUsage[b][pos.key] || 0;
               if (aPosCount !== bPosCount) return aPosCount - bPosCount;
 
               if (pos.type === "IF") {
-                const aOver5 = (inn < 5 && ifThrough5[a] >= 3) ? 100 : 0;
-                const bOver5 = (inn < 5 && ifThrough5[b] >= 3) ? 100 : 0;
-                if (aOver5 !== bOver5) return aOver5 - bOver5;
-
                 if (inn < 4) {
                   const aNeedEarly = 2 - earlyIf[a];
                   const bNeedEarly = 2 - earlyIf[b];
-                  if (aNeedEarly !== bNeedEarly) return bNeedEarly - bNeedEarly;
+                  if (aNeedEarly !== bNeedEarly) return aNeedEarly - bNeedEarly;
                 }
                 const aNeed = 3 - ifCounts[a];
                 const bNeed = 3 - ifCounts[b];
@@ -910,10 +927,9 @@
           roster.forEach(r => {
             if (ifCounts[r] < 3) penalty += (3 - ifCounts[r]) * 25;
             if (earlyIf[r] < 2) penalty += (2 - earlyIf[r]) * 20;
-            if (ifThrough5[r] > 3) penalty += (ifThrough5[r] - 3) * 30;
+            if (roster.length === 9 && ifThrough5[r] > 3) penalty += 2000;
             if (benchCounts[r] > 2) penalty += (benchCounts[r] - 2) * 50;
             
-            // Add a small penalty for any position played more than once to strongly promote variety across the board
             POSITIONS.forEach(pos => {
               const pCount = posUsage[r][pos.key] || 0;
               if (pCount > 1) {

@@ -417,13 +417,13 @@
     // 1. PASTE YOUR FIREBASE CONFIG KEYS HERE:
     // ==========================================
     const firebaseConfig = {
-      apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
-      authDomain: "rockies-2fe2c.firebaseapp.com",
-      databaseURL: "https://rockies-2fe2c-default-rtdb.firebaseio.com",
-      projectId: "rockies-2fe2c",
-      storageBucket: "rockies-2fe2c.firebasestorage.app",
-      messagingSenderId: "251399851750",
-      appId: "1:251399851750:web:b754bb5867a4e1b56eb527"
+      apiKey: "YOUR_API_KEY_HERE",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_DATABASE_NAME-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "1234567890",
+      appId: "YOUR_APP_ID"
     };
 
     // Initialize Firebase
@@ -437,7 +437,7 @@
     }
 
     // Default Roster (9 players)
-    let roster = ["Arlo", "Beckett", "Cash", "Dean", "Jack B", "Jack N", "Max", "William", "Zachary"];
+    let roster = ["Beckett", "Cash", "Jack B", "Max", "Dean", "Arlo", "Jack N", "William", "Zachary"];
     let absentList = [];
     let teamName = "Fall Ball 2026";
     let lastOutPlayer = null;
@@ -822,7 +822,7 @@
       });
     }
 
-    // Optimization Engine with Strict Rule #4 Lock for 9 Players & Variety Bonus
+    // Resilient Best-Fit Optimization Engine with Automatic Fallback
     function autoFillRemaining() {
       if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
@@ -836,118 +836,122 @@
 
       let bestState = null;
       let bestPenalty = Infinity;
-      const MAX_ATTEMPTS = 2000;
+      const MAX_ATTEMPTS = 2500;
 
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        const candidate = JSON.parse(JSON.stringify(rotationState));
-        let validRun = true;
-        const ifCounts = {}, earlyIf = {}, ifThrough5 = {}, posUsage = {}, benchCounts = {};
+      // Two-pass approach: Pass 1 enforces strict Rule 4. Pass 2 (fallback) relaxes Rule 4 slightly if necessary.
+      for (let pass = 1; pass <= 2; pass++) {
+        const strictRule4 = (pass === 1);
 
-        roster.forEach(p => {
-          ifCounts[p] = 0; earlyIf[p] = 0; ifThrough5[p] = 0; benchCounts[p] = 0; posUsage[p] = {};
-          POSITIONS.forEach(pos => posUsage[p][pos.key] = 0);
-        });
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          const candidate = JSON.parse(JSON.stringify(rotationState));
+          let validRun = true;
+          const ifCounts = {}, earlyIf = {}, ifThrough5 = {}, posUsage = {}, benchCounts = {};
 
-        if (roster.length < 9) {
+          roster.forEach(p => {
+            ifCounts[p] = 0; earlyIf[p] = 0; ifThrough5[p] = 0; benchCounts[p] = 0; posUsage[p] = {};
+            POSITIONS.forEach(pos => posUsage[p][pos.key] = 0);
+          });
+
+          if (roster.length < 9) {
+            for (let inn = 0; inn < INNINGS; inn++) {
+              candidate[inn]["C"] = { player: "", manual: false };
+            }
+          }
+
+          // Tally manual pins
           for (let inn = 0; inn < INNINGS; inn++) {
-            candidate[inn]["C"] = { player: "", manual: false };
-          }
-        }
-
-        // Tally manual pins
-        for (let inn = 0; inn < INNINGS; inn++) {
-          POSITIONS.forEach(pos => {
-            const pl = candidate[inn][pos.key].player;
-            if (pl && roster.includes(pl)) {
-              posUsage[pl][pos.key]++;
-              if (pos.type === "IF") {
-                ifCounts[pl]++;
-                if (inn < 4) earlyIf[pl]++;
-                if (inn < 5) ifThrough5[pl]++;
-              }
-            }
-          });
-        }
-
-        for (let inn = 0; inn < INNINGS; inn++) {
-          const assigned = POSITIONS.map(p => candidate[inn][p.key].player).filter(p => roster.includes(p));
-          const open = activeField.filter(pos => !candidate[inn][pos.key].player).sort((a,b) => a.type === "IF" ? -1 : 1);
-
-          for (let pos of open) {
-            const elig = roster.filter(cand => {
-              if (assigned.includes(cand)) return false;
-              if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
-              
-              // STRICT RULE #4: When 9 players active, no 4th IF inning before Inning 6
-              if (roster.length === 9 && pos.type === "IF" && inn < 5 && ifThrough5[cand] >= 3) {
-                return false;
-              }
-              return true;
-            });
-
-            if (!elig.length) { validRun = false; break; }
-
-            elig.sort((a, b) => {
-              // Position Variety Tie-Breaker
-              const aPosCount = posUsage[a][pos.key] || 0;
-              const bPosCount = posUsage[b][pos.key] || 0;
-              if (aPosCount !== bPosCount) return aPosCount - bPosCount;
-
-              if (pos.type === "IF") {
-                if (inn < 4) {
-                  const aNeedEarly = 2 - earlyIf[a];
-                  const bNeedEarly = 2 - earlyIf[b];
-                  if (aNeedEarly !== bNeedEarly) return aNeedEarly - bNeedEarly;
-                }
-                const aNeed = 3 - ifCounts[a];
-                const bNeed = 3 - ifCounts[b];
-                if (aNeed !== bNeed) return bNeed - aNeed;
-              } else {
-                return ifCounts[b] - ifCounts[a];
-              }
-              return Math.random() - 0.5;
-            });
-
-            const choice = elig[0];
-            candidate[inn][pos.key] = { player: choice, manual: false };
-            assigned.push(choice);
-            posUsage[choice][pos.key]++;
-            if (pos.type === "IF") {
-              ifCounts[choice]++;
-              if (inn < 4) earlyIf[choice]++;
-              if (inn < 5) ifThrough5[choice]++;
-            }
-          }
-          if (!validRun) break;
-          roster.forEach(r => { if (!assigned.includes(r)) benchCounts[r]++; });
-        }
-
-        if (validRun) {
-          let penalty = 0;
-          roster.forEach(r => {
-            if (ifCounts[r] < 3) penalty += (3 - ifCounts[r]) * 25;
-            if (earlyIf[r] < 2) penalty += (2 - earlyIf[r]) * 20;
-            if (roster.length === 9 && ifThrough5[r] > 3) penalty += 2000;
-            if (benchCounts[r] > 2) penalty += (benchCounts[r] - 2) * 50;
-            
             POSITIONS.forEach(pos => {
-              const pCount = posUsage[r][pos.key] || 0;
-              if (pCount > 1) {
-                penalty += (pCount - 1) * 15;
+              const pl = candidate[inn][pos.key].player;
+              if (pl && roster.includes(pl)) {
+                posUsage[pl][pos.key]++;
+                if (pos.type === "IF") {
+                  ifCounts[pl]++;
+                  if (inn < 4) earlyIf[pl]++;
+                  if (inn < 5) ifThrough5[pl]++;
+                }
               }
             });
+          }
 
-            IF_KEYS.forEach(k => {
-              if (posUsage[r][k] > 2) penalty += (posUsage[r][k] - 2) * 100;
+          for (let inn = 0; inn < INNINGS; inn++) {
+            const assigned = POSITIONS.map(p => candidate[inn][p.key].player).filter(p => roster.includes(p));
+            const open = activeField.filter(pos => !candidate[inn][pos.key].player).sort((a,b) => a.type === "IF" ? -1 : 1);
+
+            for (let pos of open) {
+              const elig = roster.filter(cand => {
+                if (assigned.includes(cand)) return false;
+                if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
+                
+                if (strictRule4 && roster.length === 9 && pos.type === "IF" && inn < 5 && ifThrough5[cand] >= 3) {
+                  return false;
+                }
+                return true;
+              });
+
+              if (!elig.length) { validRun = false; break; }
+
+              elig.sort((a, b) => {
+                const aPosCount = posUsage[a][pos.key] || 0;
+                const bPosCount = posUsage[b][pos.key] || 0;
+                if (aPosCount !== bPosCount) return aPosCount - bPosCount;
+
+                if (pos.type === "IF") {
+                  if (inn < 4) {
+                    const aNeedEarly = 2 - earlyIf[a];
+                    const bNeedEarly = 2 - earlyIf[b];
+                    if (aNeedEarly !== bNeedEarly) return aNeedEarly - bNeedEarly;
+                  }
+                  const aNeed = 3 - ifCounts[a];
+                  const bNeed = 3 - ifCounts[b];
+                  if (aNeed !== bNeed) return aNeed - bNeed;
+                } else {
+                  return ifCounts[b] - ifCounts[a];
+                }
+                return Math.random() - 0.5;
+              });
+
+              const choice = elig[0];
+              candidate[inn][pos.key] = { player: choice, manual: false };
+              assigned.push(choice);
+              posUsage[choice][pos.key]++;
+              if (pos.type === "IF") {
+                ifCounts[choice]++;
+                if (inn < 4) earlyIf[choice]++;
+                if (inn < 5) ifThrough5[choice]++;
+              }
+            }
+            if (!validRun) break;
+            roster.forEach(r => { if (!assigned.includes(r)) benchCounts[r]++; });
+          }
+
+          if (validRun) {
+            let penalty = 0;
+            roster.forEach(r => {
+              if (ifCounts[r] < 3) penalty += (3 - ifCounts[r]) * 25;
+              if (earlyIf[r] < 2) penalty += (2 - earlyIf[r]) * 20;
+              if (strictRule4 && roster.length === 9 && ifThrough5[r] > 3) penalty += 2000;
+              if (benchCounts[r] > 2) penalty += (benchCounts[r] - 2) * 50;
+              
+              POSITIONS.forEach(pos => {
+                const pCount = posUsage[r][pos.key] || 0;
+                if (pCount > 1) penalty += (pCount - 1) * 15;
+              });
+
+              IF_KEYS.forEach(k => {
+                if (posUsage[r][k] > 2) penalty += (posUsage[r][k] - 2) * 100;
+              });
             });
-          });
 
-          if (penalty < bestPenalty) {
-            bestPenalty = penalty;
-            bestState = candidate;
-            if (bestPenalty === 0) break;
+            if (penalty < bestPenalty) {
+              bestPenalty = penalty;
+              bestState = candidate;
+              if (bestPenalty === 0) break;
+            }
           }
         }
+
+        // If Pass 1 found a valid solution, stop here. Otherwise, let Pass 2 run with relaxed constraints.
+        if (bestState && bestPenalty === 0) break;
       }
 
       if (bestState) {

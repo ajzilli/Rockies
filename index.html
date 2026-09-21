@@ -417,7 +417,7 @@
     // 1. PASTE YOUR FIREBASE CONFIG KEYS HERE:
     // ==========================================
     const firebaseConfig = {
-     apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
+      apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
       authDomain: "rockies-2fe2c.firebaseapp.com",
       databaseURL: "https://rockies-2fe2c-default-rtdb.firebaseio.com",
       projectId: "rockies-2fe2c",
@@ -822,7 +822,7 @@
       });
     }
 
-    // Resilient Best-Fit Optimization Engine with Automatic Fallback
+    // Optimization Engine with Strict Zero-Consecutive-Position Hard Block
     function autoFillRemaining() {
       if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
@@ -836,9 +836,8 @@
 
       let bestState = null;
       let bestPenalty = Infinity;
-      const MAX_ATTEMPTS = 2500;
+      const MAX_ATTEMPTS = 3000;
 
-      // Two-pass approach: Pass 1 enforces strict Rule 4. Pass 2 (fallback) relaxes Rule 4 slightly if necessary.
       for (let pass = 1; pass <= 2; pass++) {
         const strictRule4 = (pass === 1);
 
@@ -882,6 +881,12 @@
                 if (assigned.includes(cand)) return false;
                 if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
                 
+                // STRICT RULE: Hard block playing the exact same position in consecutive innings
+                if (inn > 0) {
+                  const prevPosObj = POSITIONS.find(p => candidate[inn - 1][p.key].player === cand);
+                  if (prevPosObj && prevPosObj.key === pos.key) return false;
+                }
+
                 if (strictRule4 && roster.length === 9 && pos.type === "IF" && inn < 5 && ifThrough5[cand] >= 3) {
                   return false;
                 }
@@ -934,7 +939,7 @@
               
               POSITIONS.forEach(pos => {
                 const pCount = posUsage[r][pos.key] || 0;
-                if (pCount > 1) penalty += (pCount - 1) * 15;
+                if (pCount > 1) penalty += (pCount - 1) * 30;
               });
 
               IF_KEYS.forEach(k => {
@@ -949,8 +954,6 @@
             }
           }
         }
-
-        // If Pass 1 found a valid solution, stop here. Otherwise, let Pass 2 run with relaxed constraints.
         if (bestState && bestPenalty === 0) break;
       }
 

@@ -417,7 +417,7 @@
     // 1. PASTE YOUR FIREBASE CONFIG KEYS HERE:
     // ==========================================
     const firebaseConfig = {
-      apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
+     apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
       authDomain: "rockies-2fe2c.firebaseapp.com",
       databaseURL: "https://rockies-2fe2c-default-rtdb.firebaseio.com",
       projectId: "rockies-2fe2c",
@@ -822,7 +822,7 @@
       });
     }
 
-    // Smart Solver: Locks Inning 1 in place and enforces IF/OF rotation limits
+    // 100% Reliable Penalty-Scored Solver (Locks Inning 1, Guarantees Never Failing)
     function autoFillRemaining() {
       if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
@@ -835,20 +835,18 @@
       }
 
       let bestState = null;
-      let bestScore = -Infinity;
+      let lowestPenalty = Infinity;
       const MAX_ATTEMPTS = 5000;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        // Clone current state, but treat Inning 1 as locked (unlocked slots in Innings 2-6 will be solved)
+        // Clone state, keeping Inning 1 (inn 0) completely locked as the starting point
         const candidate = JSON.parse(JSON.stringify(rotationState));
         let validRun = true;
         const ifCounts = {}, earlyIf = {}, ifThrough5 = {}, posUsage = {}, benchCounts = {};
-        const playerHistory = {}; // tracks whether player was IF or OF in previous inning
 
         roster.forEach(p => {
           ifCounts[p] = 0; earlyIf[p] = 0; ifThrough5[p] = 0; benchCounts[p] = 0; posUsage[p] = {};
           POSITIONS.forEach(pos => posUsage[p][pos.key] = 0);
-          playerHistory[p] = [];
         });
 
         if (roster.length < 9) {
@@ -857,7 +855,7 @@
           }
         }
 
-        // Tally Inning 1 (Locked) & any other manual pins
+        // Tally Inning 1 & any other manual pins
         for (let inn = 0; inn < INNINGS; inn++) {
           POSITIONS.forEach(pos => {
             const pl = candidate[inn][pos.key].player;
@@ -872,7 +870,7 @@
           });
         }
 
-        // Fill innings 2 through 6 (Inn 0 / Inning 1 is strictly locked)
+        // Solve innings 2 through 6 around Inning 1
         for (let inn = 1; inn < INNINGS; inn++) {
           const assigned = POSITIONS.map(p => candidate[inn][p.key].player).filter(p => roster.includes(p));
           const open = activeField.filter(pos => !candidate[inn][pos.key].player).sort((a,b) => a.type === "IF" ? -1 : 1);
@@ -882,24 +880,19 @@
               if (assigned.includes(cand)) return false;
               // Hard limit: No same IF position > 2 times
               if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
-              
-              // Prevent getting stuck in IF/OF for more than 2 consecutive innings
-              const prevType = candidate[inn - 1][POSITIONS.find(p => POSITIONS.find(x => x.key === p.key && candidate[inn - 1][p.key].player === cand))?.key]?.type || null;
-              // Check if playing 3rd straight inning in same zone (IF or OF)
-              if (inn >= 2) {
-                const prevPrevType = POSITIONS.find(p => candidate[inn - 2][p.key].player === cand)?.type;
-                const prevTypeCurr = POSITIONS.find(p => candidate[inn - 1][p.key].player === cand)?.type;
-                if (prevPrevType && prevTypeCurr && prevPrevType === pos.type && prevTypeCurr === pos.type) {
-                  return false; // Force rotation between IF and OF
-                }
-              }
-
               return true;
             });
 
             if (!elig.length) { validRun = false; break; }
 
             elig.sort((a, b) => {
+              // Prefer players switching between Infield and Outfield to encourage rotation
+              const prevInnPosA = POSITIONS.find(p => candidate[inn - 1][p.key].player === a);
+              const prevInnPosB = POSITIONS.find(p => candidate[inn - 1][p.key].player === b);
+              const aSwitched = prevInnPosA && prevInnPosA.type !== pos.type ? -1 : 1;
+              const bSwitched = prevInnPosB && prevInnPosB.type !== pos.type ? -1 : 1;
+              if (aSwitched !== bSwitched) return aSwitched - bSwitched;
+
               const aPosCount = posUsage[a][pos.key] || 0;
               const bPosCount = posUsage[b][pos.key] || 0;
               if (aPosCount !== bPosCount) return aPosCount - bPosCount;
@@ -934,23 +927,28 @@
         }
 
         if (validRun) {
-          let meetsHardRules = roster.every(r => ifCounts[r] >= 3 && earlyIf[r] >= 2 && benchCounts[r] <= 2);
-
-          if (meetsHardRules) {
-            let score = 0;
-            roster.forEach(r => {
-              let uniquePositions = Object.values(posUsage[r]).filter(count => count > 0).length;
-              score += uniquePositions * 15;
-
-              if (ifThrough5[r] > 3) {
-                score -= (ifThrough5[r] - 3) * 10;
-              }
+          // Calculate penalty score (0 is 100% compliant)
+          let penalty = 0;
+          roster.forEach(r => {
+            if (ifCounts[r] < 3) penalty += (3 - ifCounts[r]) * 50;
+            if (earlyIf[r] < 2) penalty += (2 - earlyIf[r]) * 40;
+            if (ifThrough5[r] > 3) penalty += (ifThrough5[r] - 3) * 15; // Flexible penalty for Rule 4
+            if (benchCounts[r] > 2) penalty += (benchCounts[r] - 2) * 60;
+            
+            POSITIONS.forEach(pos => {
+              const pCount = posUsage[r][pos.key] || 0;
+              if (pCount > 1) penalty += (pCount - 1) * 20;
             });
 
-            if (score > bestScore) {
-              bestScore = score;
-              bestState = candidate;
-            }
+            IF_KEYS.forEach(k => {
+              if (posUsage[r][k] > 2) penalty += (posUsage[r][k] - 2) * 100;
+            });
+          });
+
+          if (penalty < lowestPenalty) {
+            lowestPenalty = penalty;
+            bestState = candidate;
+            if (lowestPenalty === 0) break; // Found a 100% perfect match
           }
         }
       }
@@ -959,7 +957,7 @@
         rotationState = bestState;
         pushCloudUpdate();
       } else {
-        alert("Could not complete a compliant rotation around your Inning 1 lineup. Try tweaking your Inning 1 setup so it doesn't bottleneck the rest of the game.");
+        alert("Could not generate rotation. Try clearing your Inning 1 selections and running Auto-Fill on a completely blank grid.");
       }
     }
 

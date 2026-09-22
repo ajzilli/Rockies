@@ -417,7 +417,7 @@
     // 1. PASTE YOUR FIREBASE CONFIG KEYS HERE:
     // ==========================================
     const firebaseConfig = {
-      apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
+     apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
       authDomain: "rockies-2fe2c.firebaseapp.com",
       databaseURL: "https://rockies-2fe2c-default-rtdb.firebaseio.com",
       projectId: "rockies-2fe2c",
@@ -822,7 +822,7 @@
       });
     }
 
-    // Strict Compliant Solver with Position Variety Maximization
+    // Smart 100% Compliant Solver (Auto-clears unpinned Inning 1 if bottlenecked)
     function autoFillRemaining() {
       if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
@@ -836,10 +836,19 @@
 
       let bestState = null;
       let bestVarietyScore = -1;
-      const MAX_ATTEMPTS = 3000;
+      const MAX_ATTEMPTS = 4000;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        // On later attempts if stuck, clear unpinned Inning 1 slots so solver has freedom
         const candidate = JSON.parse(JSON.stringify(rotationState));
+        if (attempt > 1500) {
+          POSITIONS.forEach(pos => {
+            if (!candidate[0][pos.key].manual) {
+              candidate[0][pos.key] = { player: "", manual: false };
+            }
+          });
+        }
+
         let validRun = true;
         const ifCounts = {}, earlyIf = {}, ifThrough5 = {}, posUsage = {}, benchCounts = {};
 
@@ -876,9 +885,7 @@
           for (let pos of open) {
             const elig = roster.filter(cand => {
               if (assigned.includes(cand)) return false;
-              // Hard limit: No same IF position > 2 times
               if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
-              // Hard limit: No 4th IF before Inning 6 (max 3 IF through inning 5)
               if (pos.type === "IF" && inn < 5 && ifThrough5[cand] >= 3) return false;
               return true;
             });
@@ -886,7 +893,6 @@
             if (!elig.length) { validRun = false; break; }
 
             elig.sort((a, b) => {
-              // Strongly prioritize variety: prefer players who have played this specific position fewest times
               const aPosCount = posUsage[a][pos.key] || 0;
               const bPosCount = posUsage[b][pos.key] || 0;
               if (aPosCount !== bPosCount) return aPosCount - bPosCount;
@@ -895,11 +901,11 @@
                 if (inn < 4) {
                   const aNeedEarly = 2 - earlyIf[a];
                   const bNeedEarly = 2 - earlyIf[b];
-                  if (aNeedEarly !== bNeedEarly) return bNeedEarly - bNeedEarly;
+                  if (aNeedEarly !== bNeedEarly) return aNeedEarly - bNeedEarly;
                 }
                 const aNeed = 3 - ifCounts[a];
                 const bNeed = 3 - ifCounts[b];
-                if (aNeed !== bNeed) return bNeed - aNeed;
+                if (aNeed !== bNeed) return bNeed - bNeed;
               } else {
                 return ifCounts[b] - ifCounts[a];
               }
@@ -921,7 +927,6 @@
         }
 
         if (validRun) {
-          // Verify strict 100% compliance across all players
           let fullyCompliant = true;
           roster.forEach(r => {
             if (ifCounts[r] < 3 || earlyIf[r] < 2 || ifThrough5[r] > 3 || benchCounts[r] > 2) {
@@ -933,14 +938,12 @@
           });
 
           if (fullyCompliant) {
-            // Calculate variety score: count how many unique positions each player plays
             let varietyScore = 0;
             roster.forEach(r => {
               let uniquePositions = Object.values(posUsage[r]).filter(count => count > 0).length;
               varietyScore += uniquePositions;
             });
 
-            // Keep the configuration that gives kids the highest diversity of positions
             if (varietyScore > bestVarietyScore) {
               bestVarietyScore = varietyScore;
               bestState = candidate;
@@ -953,7 +956,7 @@
         rotationState = bestState;
         pushCloudUpdate();
       } else {
-        alert("Could not complete a 100% compliant rotation with those specific Inning 1 assignments. Try unlocking a few positions or adjusting your Inning 1 picks.");
+        alert("Could not complete a 100% compliant rotation. Try clearing all manual selections and running Auto-Fill with a completely open grid.");
       }
     }
 

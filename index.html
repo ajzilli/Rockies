@@ -417,7 +417,7 @@
     // 1. PASTE YOUR FIREBASE CONFIG KEYS HERE:
     // ==========================================
     const firebaseConfig = {
-     apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
+      apiKey: "AIzaSyAferkmnJY0y27eS66cPPUw8HSpK4w8G3Y",
       authDomain: "rockies-2fe2c.firebaseapp.com",
       databaseURL: "https://rockies-2fe2c-default-rtdb.firebaseio.com",
       projectId: "rockies-2fe2c",
@@ -822,7 +822,7 @@
       });
     }
 
-    // Best-Fit Optimization Engine with Position Variety Bonus/Penalty
+    // Strict Compliant Solver with Position Variety Maximization
     function autoFillRemaining() {
       if (roster.length < 6) { alert("Need at least 6 players to start."); return; }
       const IF_KEYS = POSITIONS.filter(p => p.type === "IF").map(p => p.key);
@@ -835,8 +835,8 @@
       }
 
       let bestState = null;
-      let bestPenalty = Infinity;
-      const MAX_ATTEMPTS = 1500;
+      let bestVarietyScore = -1;
+      const MAX_ATTEMPTS = 3000;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const candidate = JSON.parse(JSON.stringify(rotationState));
@@ -876,27 +876,26 @@
           for (let pos of open) {
             const elig = roster.filter(cand => {
               if (assigned.includes(cand)) return false;
+              // Hard limit: No same IF position > 2 times
               if (pos.type === "IF" && posUsage[cand][pos.key] >= 2) return false;
+              // Hard limit: No 4th IF before Inning 6 (max 3 IF through inning 5)
+              if (pos.type === "IF" && inn < 5 && ifThrough5[cand] >= 3) return false;
               return true;
             });
 
             if (!elig.length) { validRun = false; break; }
 
             elig.sort((a, b) => {
-              // Position Variety Tie-Breaker: Prefer players who have played THIS specific position fewer times
+              // Strongly prioritize variety: prefer players who have played this specific position fewest times
               const aPosCount = posUsage[a][pos.key] || 0;
               const bPosCount = posUsage[b][pos.key] || 0;
               if (aPosCount !== bPosCount) return aPosCount - bPosCount;
 
               if (pos.type === "IF") {
-                const aOver5 = (inn < 5 && ifThrough5[a] >= 3) ? 100 : 0;
-                const bOver5 = (inn < 5 && ifThrough5[b] >= 3) ? 100 : 0;
-                if (aOver5 !== bOver5) return aOver5 - bOver5;
-
                 if (inn < 4) {
                   const aNeedEarly = 2 - earlyIf[a];
                   const bNeedEarly = 2 - earlyIf[b];
-                  if (aNeedEarly !== bNeedEarly) return aNeedEarly - bNeedEarly;
+                  if (aNeedEarly !== bNeedEarly) return bNeedEarly - bNeedEarly;
                 }
                 const aNeed = 3 - ifCounts[a];
                 const bNeed = 3 - ifCounts[b];
@@ -922,29 +921,30 @@
         }
 
         if (validRun) {
-          let penalty = 0;
+          // Verify strict 100% compliance across all players
+          let fullyCompliant = true;
           roster.forEach(r => {
-            if (ifCounts[r] < 3) penalty += (3 - ifCounts[r]) * 25;
-            if (earlyIf[r] < 2) penalty += (2 - earlyIf[r]) * 20;
-            if (ifThrough5[r] > 3) penalty += (ifThrough5[r] - 3) * 30;
-            if (benchCounts[r] > 2) penalty += (benchCounts[r] - 2) * 50;
-            
-            POSITIONS.forEach(pos => {
-              const pCount = posUsage[r][pos.key] || 0;
-              if (pCount > 1) {
-                penalty += (pCount - 1) * 15;
-              }
-            });
-
+            if (ifCounts[r] < 3 || earlyIf[r] < 2 || ifThrough5[r] > 3 || benchCounts[r] > 2) {
+              fullyCompliant = false;
+            }
             IF_KEYS.forEach(k => {
-              if (posUsage[r][k] > 2) penalty += (posUsage[r][k] - 2) * 100;
+              if (posUsage[r][k] > 2) fullyCompliant = false;
             });
           });
 
-          if (penalty < bestPenalty) {
-            bestPenalty = penalty;
-            bestState = candidate;
-            if (bestPenalty === 0) break;
+          if (fullyCompliant) {
+            // Calculate variety score: count how many unique positions each player plays
+            let varietyScore = 0;
+            roster.forEach(r => {
+              let uniquePositions = Object.values(posUsage[r]).filter(count => count > 0).length;
+              varietyScore += uniquePositions;
+            });
+
+            // Keep the configuration that gives kids the highest diversity of positions
+            if (varietyScore > bestVarietyScore) {
+              bestVarietyScore = varietyScore;
+              bestState = candidate;
+            }
           }
         }
       }
@@ -953,7 +953,7 @@
         rotationState = bestState;
         pushCloudUpdate();
       } else {
-        alert("Could not satisfy rotation constraints with current manual picks. Please clear a few manual selections and try again.");
+        alert("Could not complete a 100% compliant rotation with those specific Inning 1 assignments. Try unlocking a few positions or adjusting your Inning 1 picks.");
       }
     }
 
